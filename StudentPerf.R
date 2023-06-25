@@ -104,5 +104,7 @@ summary(glm.sp)
 # having completed the test prep is another 23 point increase.
 
 # combined effect of master's degree parent, non-reduced lunch, and course preparation gives a total (24+23+23) = 70 point increase
-# standard deviation is 42.77 for aggregate scores, so these effects could push students 1.64 standard deviations ahead of others. 
+
 sd(studentperformance$agg)
+
+# standard deviation is 42.77 for aggregate scores, so these effects could push students 1.64 standard deviations ahead of others. 
