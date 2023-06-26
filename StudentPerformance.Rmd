@@ -1,0 +1,148 @@
+---
+title: "StudentPerformance"
+author: "gvant"
+date: "2023-06-25"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(randomForest)
+library(knitr)
+library(rmarkdown)
+library(tibble)
+```
+
+This dataset was downloaded from Kaggle, and gives total reading, writing, and math scores for standardized testing of high school students, as well as the demographic information of each student. In this project, I break down and analyze more closely some of the factors which contribute to success on standardized testing, and also fit different models and compare the results. I also split the model into an 80/20 testing/training subset.
+
+```{r 1, echo=FALSE}
+# importing data
+studentperformance <- read.csv("StudentsPerformance.csv")
+# putting together aggregate score
+studentperformance$agg <- studentperformance$math.score + 
+  studentperformance$reading.score + studentperformance$writing.score
+# splitting the data
+set.seed(42)
+sample <- sample(c(TRUE, FALSE), nrow(studentperformance), 
+                 replace=TRUE, prob=c(0.8,0.2))
+train<- studentperformance[sample,]
+test<- studentperformance[!sample,]
+nrow(studentperformance)
+head(studentperformance)
+```
+
+The above represents a small sample of the data set and that it contains 1000 rows. 
+
+## Random Forest Regression
+We are starting off with a simple random forest regression since it takes no underlying assumptions about the data or its scale. As such, it serves as a jumping off point to compare other analytical methods.
+
+```{r 2}
+rf.reg <- randomForest(agg ~ gender + race.ethnicity + 
+                         parental.level.of.education + lunch + 
+                         test.preparation.course, data=train,
+                       ntree=150, maxnodes=30)
+
+# most important factors
+importance(rf.reg, type=2)
+```
+
+The "IncNodePurity" column is essentially a Gini coefficient statistic which is a rough measure of variable importance. The higher the value, the more that variable contributes to the overall results.
+
+The test preparation course is the second most important variable according to this model, which lines up with intuition. The most important variable, however, is the "standard / reduced" lunch option. This could be a rough indicator of poverty, but it is not known what the criteria is to qualify for reduced lunch.
+
+We now assess the accuracy of the model using the "test" data set.
+
+```{r 3, include=FALSE}
+# accuracy
+preds <- predict(rf.reg, newdata=test)
+
+accuracy05<- ifelse(abs(test$agg-preds)<0.05*test$agg,1,0) 
+accuracy15<- ifelse(abs(test$agg-preds)<0.15*test$agg,1,0)
+accuracy25<- ifelse(abs(test$agg-preds)<0.25*test$agg,1,0)
+print(accuracy05<- mean(accuracy05))
+print(accuracy15<- mean(accuracy15))
+print(accuracy25<- mean(accuracy25))
+
+rf.acc <- tibble(round(data.frame(accuracy05, accuracy15, accuracy25), 3))
+kable(rf.acc)
+```
+The random forest model predicted the majority of scores with a 10% margin of error. This is a decent result, but also indicates that the model may need more relevant variables in order to make a proper prediction.
+
+## Linear Regression
+
+We now fit a linear regression using dummy variables for the categories. Linear regression works here because even though the variable importance has been assessed, it would be beneficial to understand the numerical effect of each variable on the total score.
+
+```{r 4, echo=FALSE}
+# linear reg
+
+sp_lr <- studentperformance
+colnames(sp_lr) <- c("gender", "race", "ped", "lunch", "prep", "math", "reading", "writing", "total")
+sp_lr$gender <- as.factor(sp_lr$gender)
+sp_lr$race <- as.factor(sp_lr$race)
+sp_lr$ped <- as.factor(sp_lr$ped)
+sp_lr$lunch <- as.factor(sp_lr$lunch)
+sp_lr$prep <- as.factor(sp_lr$prep)
+
+summary(sp_lr)
+
+# default
+# male, group A, some high school, standard, none
+# setting up categories
+
+sp_lr$gender.fm <- ifelse(sp_lr$gender == "male", 0, 1)
+sp_lr$race.B <- ifelse(sp_lr$race == "group B", 1, 0)
+sp_lr$race.C <- ifelse(sp_lr$race == "group C", 1, 0)
+sp_lr$race.D <- ifelse(sp_lr$race == "group D", 1, 0)
+sp_lr$race.E <- ifelse(sp_lr$race == "group E", 1, 0)
+sp_lr$ped.h <- ifelse(sp_lr$ped == "high school", 1, 0)
+sp_lr$ped.sc <- ifelse(sp_lr$ped == "some college", 1, 0)
+sp_lr$ped.a <- ifelse(sp_lr$ped == "associate's degree", 1, 0)
+sp_lr$ped.b <- ifelse(sp_lr$ped == "bachelor's degree", 1, 0)
+sp_lr$ped.m <- ifelse(sp_lr$ped == "master's degree", 1, 0)
+sp_lr$lunch.s <- ifelse(sp_lr$lunch == "standard", 0, 1)
+sp_lr$prep.n <-  ifelse(sp_lr$prep == "none", 0, 1)
+
+# splitting the data
+set.seed(42)
+sample <- sample(c(TRUE, FALSE), nrow(sp_lr), 
+                 replace=TRUE, prob=c(0.8,0.2))
+train<- sp_lr[sample,]
+test<- sp_lr[!sample,]
+
+glm.sp <- lm(total ~ gender.fm + race.B + race.C + race.D + race.E + ped.h + ped.sc + ped.a + ped.b + ped.m + lunch.s + prep.n, data=train)
+
+summary(glm.sp)
+
+```
+
+We find similar results to the random forest model in terms of variable importance. Having reduced lunch, for instance, has an effect of subtracting 23 points from the total score. There is a significant gendered effect of +13 points with female advantage. In addition, the disparity between children with parents completing "some high school" vs a master's degree is another 24 points. To put this in perspective, taking the preparation course grants students about 23 points.
+
+The combined effect of a master's degree parent, non-reduced lunch, and course preparation gives a total of 70 point increase against a student who has reduced lunch, a parent with "some high school", and who has not taken the preparation course. This is a 1.64 standard devation disparity.
+
+Let's trim the original model using only significant variables.
+
+```{r 5, echo=FALSE}
+glm.msp <- lm(total ~ gender.fm + race.D + race.E + ped.sc + ped.a + ped.b + ped.m + lunch.s + prep.n, data=train)
+summary(glm.msp)
+```
+
+The final model gives an adjusted R2 statistic of 21.5%, suggesting that these factors explain only a small chunk of the total variance in students' scores. 
+
+## Accuracy Comparison
+```{r 6, echo=FALSE}
+# accuracy
+preds <- predict(glm.msp, newdata=test)
+
+accuracy05<- ifelse(abs(test$total-preds)<0.05*test$total,1,0) 
+accuracy15<- ifelse(abs(test$total-preds)<0.15*test$total,1,0)
+accuracy25<- ifelse(abs(test$total-preds)<0.25*test$total,1,0)
+accuracy05<- mean(accuracy05)
+accuracy15<- mean(accuracy15)
+accuracy25<- mean(accuracy25)
+glm.acc <- tibble(round(data.frame(accuracy05, accuracy15, accuracy25), 3))
+
+kable(tibble(rf.acc), caption="Random Forest")
+kable(tibble(glm.acc), caption="Linear Model")
+```
+
+The two models performed similarly, with the linear model slightly edging out the random forest model.
+
